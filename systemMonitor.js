@@ -21,16 +21,27 @@ import Gio from 'gi://Gio';
 
 Gio._promisify(Gio.Subprocess.prototype,
     'communicate_utf8_async', 'communicate_utf8_finish');
+Gio._promisify(Gio.File.prototype,
+    'load_contents_async', 'load_contents_finish');
+Gio._promisify(Gio.File.prototype,
+    'enumerate_children_async', 'enumerate_children_finish');
+Gio._promisify(Gio.FileEnumerator.prototype,
+    'next_files_async', 'next_files_finish');
 
 const HWMON_DIR = '/sys/class/hwmon';
 // k10temp: AMD. coretemp: Intel.
 const CPU_TEMP_SENSOR_NAMES = ['k10temp', 'coretemp'];
 
+function isCancelled(e) {
+    return e instanceof GLib.Error && e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
+}
+
 /**
  * Gathers CPU%, RAM usage, NVIDIA GPU%, CPU temperature and GPU temperature
  * on a timer and reports them via a callback. Contains no UI code - reports
  * `null` for any value it can't read instead of throwing, so a missing
- * sensor never brings down the extension.
+ * sensor never brings down the extension. All file/process IO is async so
+ * the shell's main loop is never blocked.
  */
 export class SystemMonitor {
     constructor(intervalSeconds, onUpdate) {
@@ -40,6 +51,7 @@ export class SystemMonitor {
         this._timeoutId = null;
         this._cancellable = null;
         this._stopped = true;
+        this._polling = false;
 
         this._prevCpu = null;
         // undefined = not searched yet, null = searched and not found
@@ -49,6 +61,8 @@ export class SystemMonitor {
 
     start() {
         this._stopped = false;
+        this._cancellable = new Gio.Cancellable();
+
         this._poll();
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, this._intervalSeconds, () => {
@@ -71,34 +85,49 @@ export class SystemMonitor {
         }
     }
 
-    _poll() {
-        const cpuPercent = this._readCpuPercent();
-        const {ramUsedGB, ramTotalGB} = this._readRam();
-        const cpuTempC = this._readCpuTemp();
+    async _poll() {
+        // Reads happen on a timer; skip a tick rather than let two
+        // overlapping polls race on shared state like `_prevCpu`.
+        if (this._polling)
+            return;
+        this._polling = true;
 
-        this._readGpu().then(({gpuPercent, gpuTempC}) => {
+        try {
+            const [cpuPercent, ram, cpuTempC, gpu] = await Promise.all([
+                this._readCpuPercent(),
+                this._readRam(),
+                this._readCpuTemp(),
+                this._readGpu(),
+            ]);
+
             if (this._stopped)
                 return;
 
             this._onUpdate({
-                cpuPercent, ramUsedGB, ramTotalGB, cpuTempC, gpuPercent, gpuTempC,
+                cpuPercent,
+                ramUsedGB: ram.ramUsedGB,
+                ramTotalGB: ram.ramTotalGB,
+                cpuTempC,
+                gpuPercent: gpu.gpuPercent,
+                gpuTempC: gpu.gpuTempC,
             });
-        });
+        } finally {
+            this._polling = false;
+        }
     }
 
-    _readFileString(path) {
+    async _readFileString(path) {
         try {
-            const [ok, bytes] = GLib.file_get_contents(path);
-            if (!ok)
-                return null;
+            const file = Gio.File.new_for_path(path);
+            const [bytes] = await file.load_contents_async(this._cancellable);
             return new TextDecoder().decode(bytes);
         } catch (e) {
             return null;
         }
     }
 
-    _readCpuPercent() {
-        const text = this._readFileString('/proc/stat');
+    async _readCpuPercent() {
+        const text = await this._readFileString('/proc/stat');
         if (!text)
             return null;
 
@@ -123,8 +152,8 @@ export class SystemMonitor {
         return percent;
     }
 
-    _readRam() {
-        const text = this._readFileString('/proc/meminfo');
+    async _readRam() {
+        const text = await this._readFileString('/proc/meminfo');
         if (!text)
             return {ramUsedGB: null, ramTotalGB: null};
 
@@ -145,36 +174,44 @@ export class SystemMonitor {
         };
     }
 
-    _findCpuTempPath() {
+    async _findCpuTempPath() {
+        let enumerator;
         try {
             const dir = Gio.File.new_for_path(HWMON_DIR);
-            const enumerator = dir.enumerate_children(
-                'standard::name', Gio.FileQueryInfoFlags.NONE, null);
+            enumerator = await dir.enumerate_children_async(
+                'standard::name', Gio.FileQueryInfoFlags.NONE,
+                GLib.PRIORITY_DEFAULT, this._cancellable);
 
-            let info;
-            while ((info = enumerator.next_file(null))) {
-                const name = info.get_name();
-                const sensorName = this._readFileString(`${HWMON_DIR}/${name}/name`);
-                if (sensorName && CPU_TEMP_SENSOR_NAMES.includes(sensorName.trim())) {
-                    const tempPath = `${HWMON_DIR}/${name}/temp1_input`;
-                    if (GLib.file_test(tempPath, GLib.FileTest.EXISTS))
-                        return tempPath;
+            let infos;
+            while ((infos = await enumerator.next_files_async(
+                10, GLib.PRIORITY_DEFAULT, this._cancellable)).length > 0) {
+                for (const info of infos) {
+                    const name = info.get_name();
+                    const sensorName = await this._readFileString(`${HWMON_DIR}/${name}/name`);
+                    if (sensorName && CPU_TEMP_SENSOR_NAMES.includes(sensorName.trim())) {
+                        const tempPath = `${HWMON_DIR}/${name}/temp1_input`;
+                        if (GLib.file_test(tempPath, GLib.FileTest.EXISTS))
+                            return tempPath;
+                    }
                 }
             }
         } catch (e) {
-            logError(e, 'simplemontool: failed to locate CPU temperature sensor');
+            if (!isCancelled(e))
+                logError(e, 'simplemontool: failed to locate CPU temperature sensor');
+        } finally {
+            enumerator?.close_async(GLib.PRIORITY_DEFAULT, null, () => {});
         }
         return null;
     }
 
-    _readCpuTemp() {
+    async _readCpuTemp() {
         if (this._cpuTempPath === undefined)
-            this._cpuTempPath = this._findCpuTempPath();
+            this._cpuTempPath = await this._findCpuTempPath();
 
         if (this._cpuTempPath === null)
             return null;
 
-        const text = this._readFileString(this._cpuTempPath);
+        const text = await this._readFileString(this._cpuTempPath);
         if (!text)
             return null;
 
@@ -183,9 +220,6 @@ export class SystemMonitor {
     }
 
     async _readGpu() {
-        if (!this._cancellable)
-            this._cancellable = new Gio.Cancellable();
-
         try {
             const proc = Gio.Subprocess.new(
                 ['nvidia-smi', '--query-gpu=utilization.gpu,temperature.gpu',
@@ -201,7 +235,7 @@ export class SystemMonitor {
 
             return {gpuPercent: util, gpuTempC: temp};
         } catch (e) {
-            if (!this._warnedGpu) {
+            if (!isCancelled(e) && !this._warnedGpu) {
                 logError(e, 'simplemontool: failed to read NVIDIA GPU stats (is nvidia-smi installed?)');
                 this._warnedGpu = true;
             }
