@@ -1,0 +1,11 @@
+/* Add your custom extension styling here */
+
+.simplemontool-box {
+    spacing: 20px;
+}
+
+.simplemontool-label {
+    font-family: monospace;
+    font-feature-settings: "tnum";
+    font-size: 0.9em;
+}

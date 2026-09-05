@@ -1,0 +1,8 @@
+{
+  "name": "simplemonitortool",
+  "description": "Simple monitoring tool that displays the cpu, ram and gpu usage",
+  "uuid": "simplemonitortool@mingbao",
+  "shell-version": [
+    "50"
+  ]
+}
