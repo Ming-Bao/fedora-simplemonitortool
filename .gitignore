@@ -1,0 +1,15 @@
+# Python virtualenv used to run the Shexli static analyzer locally
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Packaged extension zip (built with `gnome-extensions pack` for EGO upload)
+*.shell-extension.zip
+*.zip
+
+# Editor/OS cruft
+.vscode/
+*.swp
+.DS_Store
