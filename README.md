@@ -7,9 +7,8 @@ telemetry — it just reads local system files on a timer.
 
 ## Panel display
 
-```
 <img width="366" height="143" alt="image" src="https://github.com/user-attachments/assets/c4a9c77e-1a7e-410e-8589-5e68babb98a7" />
-```
+
 
 Clicking the indicator opens a menu with CPU and GPU temperature.
 
