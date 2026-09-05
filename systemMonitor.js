@@ -23,7 +23,8 @@ Gio._promisify(Gio.Subprocess.prototype,
     'communicate_utf8_async', 'communicate_utf8_finish');
 
 const HWMON_DIR = '/sys/class/hwmon';
-const CPU_TEMP_SENSOR_NAME = 'k10temp';
+// k10temp: AMD. coretemp: Intel.
+const CPU_TEMP_SENSOR_NAMES = ['k10temp', 'coretemp'];
 
 /**
  * Gathers CPU%, RAM usage, NVIDIA GPU%, CPU temperature and GPU temperature
@@ -154,7 +155,7 @@ export class SystemMonitor {
             while ((info = enumerator.next_file(null))) {
                 const name = info.get_name();
                 const sensorName = this._readFileString(`${HWMON_DIR}/${name}/name`);
-                if (sensorName && sensorName.trim() === CPU_TEMP_SENSOR_NAME) {
+                if (sensorName && CPU_TEMP_SENSOR_NAMES.includes(sensorName.trim())) {
                     const tempPath = `${HWMON_DIR}/${name}/temp1_input`;
                     if (GLib.file_test(tempPath, GLib.FileTest.EXISTS))
                         return tempPath;

@@ -1,7 +1,8 @@
 {
   "name": "simplemonitortool",
-  "description": "Simple monitoring tool that displays the cpu, ram and gpu usage",
+  "description": "Displays CPU usage, RAM usage, and CPU temperature in the top panel. GPU usage and temperature are also shown when an NVIDIA GPU and nvidia-smi are present.",
   "uuid": "simplemonitortool@mingbao",
+  "url": "https://github.com/Ming-Bao/fedora-simplemonitortool",
   "shell-version": [
     "50"
   ]
