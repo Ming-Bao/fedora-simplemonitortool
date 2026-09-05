@@ -2,4 +2,5 @@
 
 Adds a simple bar to the left of the top bar to show CPU, GPU and ram usage info and CPU and GPU temps on click.
 
-<img width="249" height="32" alt="image" src="https://github.com/user-attachments/assets/f789754c-0592-4c5e-9025-2846ee3f3198" />
+<img width="366" height="143" alt="image" src="https://github.com/user-attachments/assets/c4a9c77e-1a7e-410e-8589-5e68babb98a7" />
+
